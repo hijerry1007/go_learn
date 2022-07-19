@@ -1,18 +1,15 @@
 package main
 
 import (
-	"fmt"
+	"ivy"
 	"net/http"
 )
 
-type Engine struct{}
-
-func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	switch req.URL.path {
-	case "/":
-		fmt.Fprintf(w, "path = %q", req.URL.path)
-	}
-}
 func main() {
+	router := ivy.New()
+	router.Get("/", func(c *ivy.Context) {
+		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
+	})
 
+	router.Run(":9999")
 }
