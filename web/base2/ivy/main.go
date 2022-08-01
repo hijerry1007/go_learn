@@ -1,7 +1,9 @@
 package ivy
 
 import (
+	"html/template"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -16,8 +18,10 @@ type RouterGroup struct {
 
 type Engine struct {
 	*RouterGroup
-	router *router
-	groups []*RouterGroup
+	router        *router
+	groups        []*RouterGroup
+	htmlTemplates *template.Template
+	funcMap       template.FuncMap
 }
 
 func New() *Engine {
@@ -25,6 +29,20 @@ func New() *Engine {
 	engine.RouterGroup = &RouterGroup{engine: engine}
 	engine.groups = []*RouterGroup{engine.RouterGroup}
 	return engine
+}
+
+func Default() *Engine {
+	engine := New()
+	engine.Use(Recovery())
+	return engine
+}
+
+func (e *Engine) SetFunMap(funcMap template.FuncMap) {
+	e.funcMap = funcMap
+}
+
+func (e *Engine) LoadHTMLGlob(pattern string) {
+	e.htmlTemplates = template.Must(template.New("").Funcs(e.funcMap).ParseGlob(pattern))
 }
 
 func (group *RouterGroup) Group(prefix string) *RouterGroup {
@@ -69,6 +87,27 @@ func (group *RouterGroup) Use(middlewares ...Handler) {
 	group.middlewares = append(group.middlewares, middlewares...)
 }
 
+func (group *RouterGroup) createStaticHandler(relativePath string, fs http.FileSystem) Handler {
+	absolutePath := path.Join(group.prefix, relativePath)
+	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
+	return func(c *Context) {
+		file := c.Param("filepath")
+		if _, err := fs.Open(file); err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		fileServer.ServeHTTP(c.Writer, c.Req)
+	}
+}
+
+func (group *RouterGroup) Static(relativePath string, root string) {
+	handler := group.createStaticHandler(relativePath, http.Dir(root))
+	urlPattern := path.Join(relativePath, "/*filepath")
+	// Register GET handlers
+	group.GET(urlPattern, handler)
+}
+
 func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var middlewares []Handler
 	for _, group := range engine.groups {
@@ -77,6 +116,7 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	c := newContext(w, req)
+	c.engine = engine
 	c.handlers = middlewares
 	engine.router.handle(c)
 }
